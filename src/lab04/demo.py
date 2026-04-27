@@ -1,8 +1,13 @@
 """
 演示程序 - 展示接口的使用
 """
-from .models import Student, Course, Book
-from .interfaces import Printable, Comparable
+# 原来的导入（有问题）：
+# from .models import Student, Course, Book
+# from .interfaces import Printable, Comparable
+
+# 改成绝对导入：
+from models import Student, Course, Book
+from interfaces import Printable, Comparable
 
 
 # ============ 通用函数：使用接口作为类型 ============

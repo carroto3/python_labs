@@ -1,7 +1,11 @@
 """
 模型类 - 实现接口
 """
-from .interfaces import Printable, Comparable
+# 原来的导入（有问题）：
+# from .interfaces import Printable, Comparable
+
+# 改成绝对导入：
+from interfaces import Printable, Comparable
 
 
 class Student(Printable, Comparable):
