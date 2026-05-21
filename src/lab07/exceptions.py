@@ -1,74 +1,107 @@
 """
-Пользовательские исключения для предметной области «Недвижимость».
-Иерархия: RealEstateError -> ItemNotFoundError, DuplicateItemError,
-          ValidationError, StorageError.
+Модуль пользовательских исключений для предметной области.
+Предметная область: Недвижимость.
+
+Содержит классы исключений, используемые в бизнес-логике
+и интерфейсе командной строки для обработки ошибок,
+специфичных для предметной области.
 """
 
 
-class RealEstateError(Exception):
-    """Базовое исключение для всех ошибок в системе недвижимости."""
-    pass
-
-
-class ItemNotFoundError(RealEstateError):
-    """Объект не найден в коллекции.
-
-    Возникает при поиске или удалении объекта по несуществующему ID.
+class ItemNotFoundError(Exception):
     """
-    def __init__(self, item_id: int = None, message: str = None) -> None:
-        if message is None:
-            if item_id is not None:
-                message = (
-                    f"Объект с идентификатором {item_id} не найден в коллекции."
-                )
-            else:
-                message = "Объект не найден в коллекции."
-        self.item_id = item_id
-        super().__init__(message)
+    Исключение: объект не найден в коллекции.
 
+    Возникает при попытке удалить, обновить или получить
+    объект по идентификатору, которого нет в коллекции.
 
-class DuplicateItemError(RealEstateError):
-    """Объект с таким идентификатором уже существует.
-
-    Возникает при попытке добавить объект с уже занятым ID.
+    Attributes:
+        item_id (str): идентификатор объекта, который не был найден.
     """
-    def __init__(self, item_id: int = None, message: str = None) -> None:
-        if message is None:
-            if item_id is not None:
-                message = (
-                    f"Объект с идентификатором {item_id} уже существует."
-                )
-            else:
-                message = "Объект с таким идентификатором уже существует."
-        self.item_id = item_id
+
+    def __init__(self, item_id: str = "", message: str = "") -> None:
+        """
+        Инициализирует исключение с указанием идентификатора.
+
+        Args:
+            item_id: идентификатор ненайденного объекта.
+            message: пользовательское сообщение (если не указано,
+                     генерируется автоматически).
+        """
+        if not message:
+            message = (
+                f"Объект с идентификатором '{item_id}' не найден в коллекции."
+            )
         super().__init__(message)
+        self.item_id: str = item_id
 
 
-class ValidationError(RealEstateError):
-    """Ошибка валидации введённых данных.
-
-    Возникает при некорректных значениях полей.
+class DuplicateItemError(Exception):
     """
-    def __init__(self, field: str = None, message: str = None) -> None:
-        if message is None:
-            if field is not None:
-                message = f"Некорректное значение поля '{field}'."
-            else:
-                message = "Ошибка валидации данных."
-        self.field = field
-        super().__init__(message)
+    Исключение: объект с таким идентификатором уже существует.
 
+    Возникает при попытке добавить объект с ID,
+    который уже присутствует в коллекции.
 
-class StorageError(RealEstateError):
-    """Ошибка при работе с файловым хранилищем.
-
-    Возникает при невозможности сохранить или загрузить данные.
+    Attributes:
+        item_id (str): дублирующийся идентификатор.
     """
-    def __init__(self, filepath: str = None, message: str = None) -> None:
-        if message is None:
-            if filepath is not None:
-                message = f"Ошибка при работе с файлом '{filepath}'."
-            else:
-                message = "Ошибка хранилища данных."
-        self.filepath = filepath
+
+    def __init__(self, item_id: str = "", message: str = "") -> None:
+        """
+        Инициализирует исключение с указанием идентификатора.
+
+        Args:
+            item_id: дублирующийся идентификатор.
+            message: пользовательское сообщение (если не указано,
+                     генерируется автоматически).
+        """
+        if not message:
+            message = (
+                f"Объект с идентификатором '{item_id}' уже существует "
+                f"в коллекции."
+            )
         super().__init__(message)
+        self.item_id: str = item_id
+
+
+class StorageError(Exception):
+    """
+    Исключение: ошибка при работе с хранилищем данных.
+
+    Возникает при проблемах сохранения или загрузки данных
+    из файлового хранилища (JSON-файла).
+    """
+
+    def __init__(self, message: str = "") -> None:
+        """
+        Инициализирует исключение хранилища.
+
+        Args:
+            message: описание ошибки (если не указано,
+                     используется сообщение по умолчанию).
+        """
+        super().__init__(
+            message or "Ошибка при работе с хранилищем данных."
+        )
+
+
+class ValidationError(Exception):
+    """
+    Исключение: ошибка валидации данных.
+
+    Возникает при некорректных входных данных на уровне
+    бизнес-логики, которые не удалось перехватить ранее.
+    """
+
+    def __init__(self, message: str = "") -> None:
+        """
+        Инициализирует исключение валидации.
+
+        Args:
+            message: описание ошибки валидации (если не указано,
+                     используется сообщение по умолчанию).
+        """
+        super().__init__(
+            message or "Ошибка валидации данных."
+        )

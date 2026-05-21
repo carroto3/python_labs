@@ -1,310 +1,512 @@
 """
-Модуль бизнес-логики приложения «Недвижимость».
-Управляет коллекцией объектов недвижимости:
-добавление, удаление, поиск, фильтрация.
-CLI не должен обращаться к коллекции напрямую — только через этот модуль.
+Модуль бизнес-логики приложения.
+Предметная область: Недвижимость.
+
+Содержит класс ApartmentService, который управляет коллекцией
+объектов недвижимости и предоставляет все операции для CLI-слоя.
+CLI не должен напрямую обращаться к коллекции — только через этот сервис.
+
+Все публичные методы имеют полные аннотации типов и docstring'и.
 """
 
-from typing import List, Optional, Callable, Any
+from typing import Callable, Any, Optional
 
 from models import (
     Apartment,
     ResidentialApartment,
     CommercialApartment,
-    Printable,
-    Comparable,
 )
-from exceptions import (
-    ItemNotFoundError,
-    DuplicateItemError,
-    ValidationError,
-    StorageError,
-)
-from storage import Storage
+from exceptions import ItemNotFoundError, DuplicateItemError
 
 
-# ------------------------------------------------------------------
-# Демонстрационные данные (для первоначальной загрузки)
-# ------------------------------------------------------------------
+# ── Типы-алиасы для стратегий ────────────────────────────────────────────
 
-_DEMO_APARTMENTS: List[Apartment] = [
-    Apartment(1, "ул. Ленина, д. 10, кв. 45", 55.0, 4500000.0, 2, "доступна"),
-    Apartment(2, "пр. Мира, д. 25, кв. 12", 72.0, 6800000.0, 3, "продана"),
-    Apartment(3, "ул. Пушкина, д. 5, кв. 88", 38.0, 3200000.0, 1, "доступна"),
-    ResidentialApartment(4, "ул. Садовая, д. 15, кв. 32", 68.0, 5200000.0, 3, True, 5, "доступна"),
-    ResidentialApartment(5, "ул. Цветочная, д. 8, кв. 7", 48.0, 3800000.0, 2, False, 2, "забронирована"),
-    CommercialApartment(6, "ул. Деловая, д. 3, оф. 101", 120.0, 9500000.0, 5, "офис", True, "доступна"),
-    CommercialApartment(7, "пр. Торговый, д. 12, пом. 5", 85.0, 6100000.0, 3, "магазин", False, "доступна"),
-]
+SortStrategy = Callable[[Apartment], Any]
+"""Функция-стратегия сортировки: принимает Apartment, возвращает ключ."""
 
-# Атрибуты, доступные для поиска
-_SEARCHABLE_ATTRS: List[str] = [
-    "address", "area", "price", "rooms", "status",
-    "has_balcony", "floor", "business_type", "has_parking",
-]
-
-# Отображение кода типа в класс
-_TYPE_CLASSES = {
-    "1": Apartment,
-    "2": ResidentialApartment,
-    "3": CommercialApartment,
-}
+FilterPredicate = Callable[[Apartment], bool]
+"""Функция-предикат для фильтрации: принимает Apartment, возвращает bool."""
 
 
-class ApartmentManager:
-    """Управление коллекцией объектов недвижимости.
+# ── Сервисный класс ──────────────────────────────────────────────────────
 
-    Предоставляет CRUD-операции, поиск, фильтрацию,
-    сохранение и загрузку данных.
+class ApartmentService:
+    """
+    Сервис для управления коллекцией объектов недвижимости.
+
+    Предоставляет методы для добавления, удаления, поиска,
+    фильтрации и сортировки объектов. Содержит всю бизнес-логику
+    и не выполняет операций ввода-вывода напрямую.
+
+    Слой бизнес-логики (app.py) изолирован от слоя представления (cli.py):
+    CLI вызывает методы сервиса и получает готовые результаты.
 
     Attributes:
-        items (List[Apartment]): коллекция объектов.
+        _items (list[Apartment]): внутренний список объектов недвижимости.
     """
 
-    def __init__(self, storage: Optional[Storage] = None) -> None:
-        """Инициализация менеджера.
+    def __init__(self) -> None:
+        """Инициализирует пустой сервис с пустой коллекцией объектов."""
+        self._items: list[Apartment] = []
 
-        Args:
-            storage (Storage, optional): объект хранилища.
+    # ── Базовые операции CRUD ────────────────────────────────────────────
+
+    def add(self, item: Apartment) -> None:
         """
-        self._items: List[Apartment] = []
-        self._next_id: int = 1
-        self._storage = storage
+        Добавляет объект недвижимости в коллекцию.
 
-    # ------------------------------------------------------------------
-    # Свойства
-    # ------------------------------------------------------------------
-
-    @property
-    def items(self) -> List[Apartment]:
-        """Возвращает копию списка (безопасное чтение)."""
-        return list(self._items)
-
-    @property
-    def count(self) -> int:
-        """Количество объектов в коллекции."""
-        return len(self._items)
-
-    # ------------------------------------------------------------------
-    # CRUD
-    # ------------------------------------------------------------------
-
-    def add_apartment(
-        self,
-        type_code: str,
-        address: str,
-        area: float,
-        price: float,
-        rooms: int,
-        status: str = "доступна",
-        **extra_fields,
-    ) -> Apartment:
-        """Добавляет новый объект недвижимости.
+        Выполняет проверку на дубликат по идентификатору перед добавлением.
 
         Args:
-            type_code (str): код типа ("1" = Apartment, "2" = Residential, "3" = Commercial).
-            address (str): адрес.
-            area (float): площадь.
-            price (float): цена.
-            rooms (int): количество комнат.
-            status (str): статус.
-            **extra_fields: доп. поля для Residential/Commercial.
+            item: объект Apartment (или производного класса) для добавления.
+
+        Raises:
+            TypeError: если передан объект, не являющийся экземпляром Apartment.
+            DuplicateItemError: если объект с таким ID уже существует в коллекции.
+        """
+        if not isinstance(item, Apartment):
+            raise TypeError(
+                f"Можно добавлять только объекты типа Apartment, "
+                f"получен {type(item).__name__}"
+            )
+        if self.find_by_id(item.id) is not None:
+            raise DuplicateItemError(item.id)
+        self._items.append(item)
+
+    def remove(self, item_id: str) -> Apartment:
+        """
+        Удаляет объект недвижимости из коллекции по идентификатору.
+
+        Args:
+            item_id: уникальный идентификатор (UUID) объекта для удаления.
 
         Returns:
-            Apartment: созданный объект.
+            Apartment: удалённый объект.
 
         Raises:
-            ValidationError: при некорректных данных.
-            DuplicateItemError: при дублировании ID (не должно возникать).
+            ItemNotFoundError: если объект с указанным ID не найден в коллекции.
         """
-        cls = _TYPE_CLASSES.get(type_code, Apartment)
-        item_id = self._next_id
-        self._next_id += 1
-
-        try:
-            item = cls(
-                apartment_id=item_id,
-                address=address,
-                area=area,
-                price=price,
-                rooms=rooms,
-                status=status,
-                **extra_fields,
-            )
-        except (ValueError, TypeError) as e:
-            self._next_id -= 1  # откат ID
-            raise ValidationError(message=str(e)) from e
-
-        self._items.append(item)
+        item: Optional[Apartment] = self.find_by_id(item_id)
+        if item is None:
+            raise ItemNotFoundError(item_id)
+        self._items.remove(item)
         return item
 
-    def get_all(self) -> List[Apartment]:
-        """Возвращает все объекты."""
-        return self.items
+    def update_price(self, item_id: str, new_price: float) -> Apartment:
+        """
+        Обновляет цену аренды объекта недвижимости.
 
-    def get_by_id(self, item_id: int) -> Apartment:
-        """Находит объект по ID.
+        Args:
+            item_id: идентификатор объекта.
+            new_price: новая цена аренды в рублях.
+
+        Returns:
+            Apartment: обновлённый объект.
 
         Raises:
-            ItemNotFoundError: если не найден.
+            ItemNotFoundError: если объект с указанным ID не найден.
+            TypeError, ValueError: при некорректном значении цены (из сеттера).
+        """
+        item: Optional[Apartment] = self.find_by_id(item_id)
+        if item is None:
+            raise ItemNotFoundError(item_id)
+        item.price = new_price
+        return item
+
+    def update_status(self, item_id: str, new_status: str) -> Apartment:
+        """
+        Обновляет статус объекта недвижимости.
+
+        Args:
+            item_id: идентификатор объекта.
+            new_status: новый статус (из списка Apartment.AVAILABLE_STATUSES).
+
+        Returns:
+            Apartment: обновлённый объект.
+
+        Raises:
+            ItemNotFoundError: если объект с указанным ID не найден.
+            TypeError, ValueError: при некорректном статусе (из сеттера).
+        """
+        item: Optional[Apartment] = self.find_by_id(item_id)
+        if item is None:
+            raise ItemNotFoundError(item_id)
+        item.status = new_status
+        return item
+
+    def get_all(self) -> list[Apartment]:
+        """
+        Возвращает копию списка всех объектов в коллекции.
+
+        Returns:
+            list[Apartment]: копия списка всех объектов недвижимости.
+        """
+        return self._items.copy()
+
+    def find_by_id(self, item_id: str) -> Optional[Apartment]:
+        """
+        Находит объект недвижимости по его уникальному идентификатору.
+
+        Args:
+            item_id: идентификатор (UUID) для поиска.
+
+        Returns:
+            Optional[Apartment]: найденный объект или None, если не найден.
         """
         for item in self._items:
             if item.id == item_id:
                 return item
-        raise ItemNotFoundError(item_id)
+        return None
 
-    def remove_by_id(self, item_id: int) -> Apartment:
-        """Удаляет объект по ID.
+    # ── Поиск по атрибуту ────────────────────────────────────────────────
 
-        Raises:
-            ItemNotFoundError: если не найден.
+    def search_by_address(self, query: str) -> list[Apartment]:
         """
-        for i, item in enumerate(self._items):
-            if item.id == item_id:
-                return self._items.pop(i)
-        raise ItemNotFoundError(item_id)
-
-    # ------------------------------------------------------------------
-    # Поиск (ЛР5)
-    # ------------------------------------------------------------------
-
-    def find_by_attribute(self, attr: str, value: str) -> List[Apartment]:
-        """Поиск объектов по значению атрибута (без учёта регистра).
+        Ищет объекты по подстроке в адресе (без учёта регистра).
 
         Args:
-            attr (str): имя атрибута.
-            value (str): искомое значение.
+            query: поисковый запрос — подстрока, которая должна
+                   содержаться в адресе объекта.
 
         Returns:
-            List[Apartment]: найденные объекты.
+            list[Apartment]: список объектов, адрес которых содержит запрос.
+                             Пустой список, если ничего не найдено.
+        """
+        query_lower: str = query.strip().lower()
+        if not query_lower:
+            return []
+        return [
+            item for item in self._items
+            if query_lower in item.address.lower()
+        ]
+
+    def search_by_attribute(self, attribute: str, value: str) -> list[Apartment]:
+        """
+        Ищет объекты по заданному атрибуту и значению.
+
+        Поддерживаемые атрибуты:
+            - 'address'  — поиск по подстроке в адресе.
+            - 'status'   — точное совпадение статуса.
+            - 'rooms'    — точное совпадение количества комнат.
+            - 'type'     — фильтрация по имени класса
+                           (Apartment / ResidentialApartment / CommercialApartment).
+
+        Args:
+            attribute: имя атрибута для поиска (регистронезависимо).
+            value: значение для поиска.
+
+        Returns:
+            list[Apartment]: список найденных объектов.
 
         Raises:
-            ValidationError: если атрибут не поддерживается.
+            ValueError: если атрибут не поддерживается или значение некорректно.
         """
-        if attr not in _SEARCHABLE_ATTRS:
-            raise ValidationError(
-                attr,
-                f"Поиск по атрибуту '{attr}' не поддерживается. "
-                f"Доступные: {', '.join(_SEARCHABLE_ATTRS)}",
+        attribute = attribute.strip().lower()
+        value = value.strip()
+
+        if attribute == "address":
+            return self.search_by_address(value)
+
+        elif attribute == "status":
+            value_lower: str = value.lower()
+            return [
+                item for item in self._items
+                if item.status.lower() == value_lower
+            ]
+
+        elif attribute == "rooms":
+            try:
+                rooms_val: int = int(value)
+            except ValueError as exc:
+                raise ValueError(
+                    f"Количество комнат должно быть целым числом, "
+                    f"получено: '{value}'"
+                ) from exc
+            return [
+                item for item in self._items
+                if item.rooms == rooms_val
+            ]
+
+        elif attribute == "type":
+            type_map: dict[str, type] = {
+                "apartment": Apartment,
+                "residential": ResidentialApartment,
+                "residentialapartment": ResidentialApartment,
+                "commercial": CommercialApartment,
+                "commercialapartment": CommercialApartment,
+            }
+            clean_value: str = value.lower().replace(" ", "")
+            target_type: type | None = type_map.get(clean_value)
+            if target_type is None:
+                raise ValueError(
+                    f"Неизвестный тип объекта: '{value}'. "
+                    f"Допустимые: apartment, residential, commercial"
+                )
+            return [
+                item for item in self._items
+                if type(item) is target_type
+            ]
+
+        else:
+            raise ValueError(
+                f"Неизвестный атрибут: '{attribute}'. "
+                f"Допустимые: address, status, rooms, type"
             )
-        results = []
-        for item in self._items:
-            if hasattr(item, attr):
-                actual = getattr(item, attr)
-                if str(actual).lower() == value.lower():
-                    results.append(item)
-        return results
 
-    def find_by_predicate(self, predicate: Callable[[Apartment], bool]) -> List[Apartment]:
-        """Поиск по пользовательскому условию-предикату.
+    # ── Фильтрация ───────────────────────────────────────────────────────
+
+    def filter_by_price_range(
+        self, min_price: float, max_price: float
+    ) -> list[Apartment]:
+        """
+        Фильтрует объекты по диапазону цен (включительно).
 
         Args:
-            predicate (Callable): функция, принимающая Apartment, возвращающая bool.
+            min_price: минимальная цена аренды в рублях.
+            max_price: максимальная цена аренды в рублях.
 
         Returns:
-            List[Apartment]: отфильтрованные объекты.
+            list[Apartment]: объекты, цена которых попадает в диапазон.
+
+        Raises:
+            ValueError: если min_price > max_price.
+        """
+        if min_price > max_price:
+            raise ValueError(
+                f"Минимальная цена ({min_price:,.0f}) не может быть больше "
+                f"максимальной ({max_price:,.0f})"
+            )
+        return [
+            item for item in self._items
+            if min_price <= item.price <= max_price
+        ]
+
+    def filter_by_area_range(
+        self, min_area: float, max_area: float
+    ) -> list[Apartment]:
+        """
+        Фильтрует объекты по диапазону площади (включительно).
+
+        Args:
+            min_area: минимальная площадь в м².
+            max_area: максимальная площадь в м².
+
+        Returns:
+            list[Apartment]: объекты, площадь которых попадает в диапазон.
+
+        Raises:
+            ValueError: если min_area > max_area.
+        """
+        if min_area > max_area:
+            raise ValueError(
+                f"Минимальная площадь ({min_area:.1f}) не может быть больше "
+                f"максимальной ({max_area:.1f})"
+            )
+        return [
+            item for item in self._items
+            if min_area <= item.area <= max_area
+        ]
+
+    def filter_by_status(self, status: str) -> list[Apartment]:
+        """
+        Фильтрует объекты по статусу (точное совпадение, без учёта регистра).
+
+        Args:
+            status: статус для фильтрации (available, rented, reserved).
+
+        Returns:
+            list[Apartment]: объекты с указанным статусом.
+        """
+        status_lower: str = status.strip().lower()
+        return [
+            item for item in self._items
+            if item.status.lower() == status_lower
+        ]
+
+    def filter_by_type(self, object_type: str) -> list[Apartment]:
+        """
+        Фильтрует объекты по типу: только жилые или только коммерческие.
+
+        Args:
+            object_type: строка, определяющая тип:
+                         'residential' или 'жилая' — только жилые квартиры.
+                         'commercial' или 'коммерческая' — только коммерческие.
+
+        Returns:
+            list[Apartment]: объекты указанного типа.
+
+        Raises:
+            ValueError: если передан неизвестный тип.
+        """
+        object_type = object_type.strip().lower()
+        if object_type in ("residential", "жилая"):
+            return [
+                item for item in self._items
+                if isinstance(item, ResidentialApartment)
+            ]
+        elif object_type in ("commercial", "коммерческая"):
+            return [
+                item for item in self._items
+                if isinstance(item, CommercialApartment)
+            ]
+        else:
+            raise ValueError(
+                f"Неизвестный тип: '{object_type}'. "
+                f"Допустимые: residential (жилая), commercial (коммерческая)"
+            )
+
+    def filter_by(self, predicate: FilterPredicate) -> list[Apartment]:
+        """
+        Фильтрует объекты по произвольному пользовательскому предикату.
+
+        Args:
+            predicate: функция, принимающая Apartment и возвращающая bool.
+                       True означает, что объект проходит фильтр.
+
+        Returns:
+            list[Apartment]: объекты, удовлетворяющие предикату.
         """
         return [item for item in self._items if predicate(item)]
 
-    # ------------------------------------------------------------------
-    # Фильтрация (ЛР5)
-    # ------------------------------------------------------------------
+    # ── Сортировка ───────────────────────────────────────────────────────
 
-    def filter_by_price_range(self, min_price: float, max_price: float) -> List[Apartment]:
-        """Фильтрация по диапазону цен."""
-        return self.find_by_predicate(
-            lambda a: min_price <= a.price <= max_price
-        )
-
-    def filter_by_area_range(self, min_area: float, max_area: float) -> List[Apartment]:
-        """Фильтрация по диапазону площади."""
-        return self.find_by_predicate(
-            lambda a: min_area <= a.area <= max_area
-        )
-
-    def filter_by_rooms(self, rooms: int) -> List[Apartment]:
-        """Фильтрация по количеству комнат."""
-        return self.find_by_predicate(lambda a: a.rooms == rooms)
-
-    def filter_by_status(self, status: str) -> List[Apartment]:
-        """Фильтрация по статусу."""
-        return self.find_by_predicate(
-            lambda a: a.status.lower() == status.lower()
-        )
-
-    def filter_by_type(self, type_class: type) -> List[Apartment]:
-        """Фильтрация по типу объекта (Apartment / Residential / Commercial)."""
-        return self.find_by_predicate(lambda a: isinstance(a, type_class))
-
-    # ------------------------------------------------------------------
-    # Сохранение / загрузка
-    # ------------------------------------------------------------------
-
-    def save(self) -> None:
-        """Сохраняет коллекцию в хранилище.
-
-        Raises:
-            StorageError: если хранилище не настроено или ошибка записи.
+    def sort_by(
+        self, strategy: SortStrategy, reverse: bool = False
+    ) -> list[Apartment]:
         """
-        if self._storage is None:
-            raise StorageError(message="Хранилище не настроено.")
-        self._storage.save(self._items)
+        Сортирует объекты по заданной стратегии (функции-ключу).
 
-    def load(self) -> None:
-        """Загружает коллекцию из хранилища.
+        Args:
+            strategy: функция, извлекающая ключ сортировки из объекта Apartment.
+            reverse: если True — сортировка по убыванию.
 
-        Если файл пуст или отсутствует — загружаются демо-данные.
+        Returns:
+            list[Apartment]: новый отсортированный список (исходная коллекция
+                             не изменяется).
         """
-        if self._storage is None:
-            raise StorageError(message="Хранилище не настроено.")
-        loaded = self._storage.load()
-        if loaded:
-            self._items = loaded
-            self._next_id = max(item.id for item in self._items) + 1
-        else:
-            self._load_demo()
+        return sorted(self._items, key=strategy, reverse=reverse)
 
-    def _load_demo(self) -> None:
-        """Загружает демонстрационные данные."""
-        self._items = list(_DEMO_APARTMENTS)
-        self._next_id = max(item.id for item in self._items) + 1 if self._items else 1
+    def sort_by_address(self, reverse: bool = False) -> list[Apartment]:
+        """
+        Сортирует объекты по адресу (названию) в алфавитном порядке.
 
-    def reset_to_demo(self) -> None:
-        """Сбрасывает коллекцию к демо-данным."""
-        self._load_demo()
+        Args:
+            reverse: если True — в обратном алфавитном порядке (Z → A).
 
-    # ------------------------------------------------------------------
-    # Утилиты для CLI
-    # ------------------------------------------------------------------
+        Returns:
+            list[Apartment]: отсортированный список объектов.
+        """
+        return self.sort_by(
+            lambda item: item.address.lower(), reverse=reverse
+        )
 
-    @staticmethod
-    def get_searchable_attributes() -> List[str]:
-        """Возвращает список атрибутов для поиска."""
-        return list(_SEARCHABLE_ATTRS)
+    def sort_by_price(self, reverse: bool = False) -> list[Apartment]:
+        """
+        Сортирует объекты по цене аренды.
 
-    @staticmethod
-    def get_type_options() -> dict:
-        """Возвращает доступные типы объектов."""
+        Args:
+            reverse: если True — по убыванию цены (от дорогих к дешёвым).
+
+        Returns:
+            list[Apartment]: отсортированный список объектов.
+        """
+        return self.sort_by(lambda item: item.price, reverse=reverse)
+
+    def sort_by_date_added(self, reverse: bool = False) -> list[Apartment]:
+        """
+        Сортирует объекты по дате добавления.
+
+        Args:
+            reverse: если True — сначала новые (по убыванию даты).
+
+        Returns:
+            list[Apartment]: отсортированный список объектов.
+        """
+        return self.sort_by(lambda item: item.date_added, reverse=reverse)
+
+    def sort_by_area(self, reverse: bool = False) -> list[Apartment]:
+        """
+        Сортирует объекты по площади.
+
+        Args:
+            reverse: если True — по убыванию площади (от больших к маленьким).
+
+        Returns:
+            list[Apartment]: отсортированный список объектов.
+        """
+        return self.sort_by(lambda item: item.area, reverse=reverse)
+
+    # ── Статистика ───────────────────────────────────────────────────────
+
+    def count(self) -> int:
+        """
+        Возвращает количество объектов в коллекции.
+
+        Returns:
+            int: количество объектов.
+        """
+        return len(self._items)
+
+    def get_statistics(self) -> dict[str, Any]:
+        """
+        Возвращает статистическую сводку по коллекции.
+
+        Включает общее количество, среднюю/мин/макс цену,
+        среднюю площадь, распределение по статусам и типам объектов.
+
+        Returns:
+            dict[str, Any]: словарь со статистическими показателями.
+            Если коллекция пуста, возвращает нулевые значения.
+        """
+        if not self._items:
+            return {
+                "total": 0,
+                "avg_price": 0.0,
+                "avg_area": 0.0,
+                "min_price": 0.0,
+                "max_price": 0.0,
+                "statuses": {},
+                "types": {},
+            }
+
+        prices: list[float] = [item.price for item in self._items]
+        areas: list[float] = [item.area for item in self._items]
+
+        status_counts: dict[str, int] = {}
+        type_counts: dict[str, int] = {}
+
+        for item in self._items:
+            status_counts[item.status] = (
+                status_counts.get(item.status, 0) + 1
+            )
+            type_name: str = type(item).__name__
+            type_counts[type_name] = (
+                type_counts.get(type_name, 0) + 1
+            )
+
         return {
-            "1": ("Обычная квартира", Apartment),
-            "2": ("Жилая квартира", ResidentialApartment),
-            "3": ("Коммерческая недвижимость", CommercialApartment),
+            "total": len(self._items),
+            "avg_price": sum(prices) / len(prices),
+            "avg_area": sum(areas) / len(areas),
+            "min_price": min(prices),
+            "max_price": max(prices),
+            "statuses": status_counts,
+            "types": type_counts,
         }
 
-    @staticmethod
-    def validate_float(value: Any, field_name: str = "value") -> float:
-        """Валидация и преобразование в float."""
-        try:
-            result = float(value)
-        except (ValueError, TypeError) as e:
-            raise ValidationError(field_name, f"Значение должно быть числом.") from e
-        return result
+    # ── Работа с данными коллекции ──────────────────────────────────────
 
-    @staticmethod
-    def validate_int(value: Any, field_name: str = "value") -> int:
-        """Валидация и преобразование в int."""
-        try:
-            result = int(value)
-        except (ValueError, TypeError) as e:
-            raise ValidationError(field_name, f"Значение должно быть целым числом.") from e
-        return result
+    def set_items(self, items: list[Apartment]) -> None:
+        """
+        Заменяет всю коллекцию новым списком объектов.
+
+        Используется при загрузке данных из файла.
+
+        Args:
+            items: новый список объектов Apartment для замены коллекции.
+        """
+        self._items = items.copy()
+
+    def clear(self) -> None:
+        """Очищает коллекцию, удаляя все объекты без возможности восстановления."""
+        self._items.clear()

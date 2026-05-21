@@ -1,99 +1,96 @@
 """
 Модуль сохранения и загрузки данных.
-Обеспечивает персистентность коллекции объектов недвижимости через JSON.
-Поддерживает полиморфную десериализацию.
+Предметная область: Недвижимость.
+
+Обеспечивает сохранение коллекции объектов недвижимости в JSON-файл
+и последующую загрузку с восстановлением правильных типов объектов
+(полиморфная десериализация через фабрику apartment_from_dict).
 """
 
 import json
 import os
-from typing import List
+from typing import Any
 
-from models import Apartment, create_apartment_from_dict
+from models import Apartment, apartment_from_dict
 from exceptions import StorageError
 
 
-class Storage:
-    """Класс для работы с файловым хранилищем (JSON).
-
-    Attributes:
-        filepath (str): путь к JSON-файлу данных.
+def save(collection: list[Apartment], filepath: str) -> None:
     """
+    Сохраняет коллекцию объектов недвижимости в JSON-файл.
 
-    def __init__(self, filepath: str) -> None:
-        """Инициализация хранилища.
+    Каждый объект сериализуется через метод to_dict(),
+    который сохраняет тип объекта в поле 'type' для последующего
+    восстановления полиморфной иерархии.
 
-        Args:
-            filepath (str): путь к JSON-файлу.
-        """
-        self.filepath = filepath
+    Args:
+        collection: список объектов Apartment (включая производные классы)
+                    для сохранения.
+        filepath: путь к файлу для сохранения данных.
 
-    def save(self, items: List[Apartment]) -> None:
-        """Сохраняет коллекцию объектов в JSON-файл.
+    Raises:
+        StorageError: если не удалось записать файл (оборачивает IOError).
+    """
+    data: list[dict[str, Any]] = [item.to_dict() for item in collection]
+    try:
+        with open(filepath, "w", encoding="utf-8") as file:
+            json.dump(data, file, ensure_ascii=False, indent=2)
+    except IOError as exc:
+        raise StorageError(
+            f"Не удалось сохранить данные в файл '{filepath}': {exc}"
+        ) from exc
 
-        Args:
-            items (List[Apartment]): коллекция для сохранения.
 
-        Raises:
-            StorageError: если запись не удалась.
-        """
-        try:
-            data = [item.to_dict() for item in items]
-            directory = os.path.dirname(self.filepath)
-            if directory and not os.path.exists(directory):
-                os.makedirs(directory, exist_ok=True)
-            with open(self.filepath, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-        except (IOError, OSError, PermissionError) as e:
-            raise StorageError(
-                self.filepath,
-                f"Не удалось сохранить данные: {e}",
-            ) from e
+def load(filepath: str) -> list[Apartment]:
+    """
+    Загружает объекты недвижимости из JSON-файла.
 
-    def load(self) -> List[Apartment]:
-        """Загружает коллекцию объектов из JSON-файла.
+    Автоматически восстанавливает правильные типы объектов
+    (Apartment, ResidentialApartment, CommercialApartment)
+    через фабричную функцию apartment_from_dict.
 
-        Если файл не существует, возвращает пустой список.
+    Args:
+        filepath: путь к JSON-файлу с данными.
 
-        Returns:
-            List[Apartment]: загруженная коллекция.
+    Returns:
+        list[Apartment]: список восстановленных объектов недвижимости.
 
-        Raises:
-            StorageError: если чтение или разбор не удались.
-        """
-        if not os.path.exists(self.filepath):
-            return []
+    Raises:
+        FileNotFoundError: если файл не существует.
+        StorageError: если не удалось прочитать файл.
+        ValueError: если данные в файле повреждены или имеют неверный формат.
+    """
+    if not os.path.exists(filepath):
+        raise FileNotFoundError(
+            f"Файл данных не найден: '{filepath}'"
+        )
 
-        try:
-            with open(self.filepath, "r", encoding="utf-8") as f:
-                raw_data = json.load(f)
-        except (IOError, OSError, PermissionError) as e:
-            raise StorageError(
-                self.filepath,
-                f"Не удалось прочитать файл: {e}",
-            ) from e
-        except json.JSONDecodeError as e:
-            raise StorageError(
-                self.filepath,
-                f"Файл повреждён (некорректный JSON): {e}",
-            ) from e
+    try:
+        with open(filepath, "r", encoding="utf-8") as file:
+            raw_data: Any = json.load(file)
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"Ошибка чтения JSON из файла '{filepath}': {exc}"
+        ) from exc
+    except IOError as exc:
+        raise StorageError(
+            f"Не удалось прочитать файл '{filepath}': {exc}"
+        ) from exc
 
-        items: List[Apartment] = []
-        for entry in raw_data:
-            try:
-                item = create_apartment_from_dict(entry)
-                items.append(item)
-            except (TypeError, ValueError) as e:
-                print(f"Предупреждение: пропущена повреждённая запись: {e}")
+    if not isinstance(raw_data, list):
+        raise ValueError(
+            f"Ожидался список объектов в файле '{filepath}', "
+            f"получен {type(raw_data).__name__}"
+        )
 
-        return items
+    collection: list[Apartment] = []
+    for index, item_data in enumerate(raw_data):
+        if not isinstance(item_data, dict):
+            raise ValueError(
+                f"Элемент {index} в файле '{filepath}' "
+                f"не является словарём (получен {type(item_data).__name__})"
+            )
+        apartment: Apartment = apartment_from_dict(item_data)
+        collection.append(apartment)
 
-    def delete_file(self) -> None:
-        """Удаляет файл данных."""
-        if os.path.exists(self.filepath):
-            try:
-                os.remove(self.filepath)
-            except OSError as e:
-                raise StorageError(
-                    self.filepath,
-                    f"Не удалось удалить файл: {e}",
-                ) from e
+    return collection
